@@ -1,8 +1,8 @@
 module game_logic_controller #(
     parameter N = 16,
     parameter M = 2,
-    parameter INITIAL_SPEED = 26'd50_000_000,
-    parameter SPEED_INCREMENT = 26'd20_000_000//此处进行了暂时的修改
+    parameter INITIAL_SPEED = 26'd20_000_000,
+    parameter SPEED_INCREMENT = 26'd20_000_000//暂时修改
 )(
     // 时钟和复位
     input wire clk,

@@ -26,9 +26,9 @@ module snake_top (
     output wire [7:0] seg_data_out,   // 段选，共阳极通常低电平点亮
 
     // LED 输出 (假设8个LED)
-    output wire [7:0] led_out
+    output wire [7:0] led_out,
 
-    output wire buzzer_physical_out // 蜂鸣器输出
+    output wire buzzer_out
 );
 
     // =================== 全局参数定义 ===================
@@ -87,9 +87,9 @@ module snake_top (
     wire [GRID_COORD_Y_BITS-1:0] queried_seg_y_from_data;
     wire                         queried_seg_valid_from_data;
 
-    // Game Logic Controller -> Sound Controller
-    wire [SOUND_EVENT_BITS-1:0] sound_event_code_from_logic;
-    wire sound_trigger_from_logic;
+    wire [SOUND_EVENT_BITS-1:0] sound_event_code_to_sound_ctrl;
+    wire                        sound_trigger_to_sound_ctrl;
+
 
     // =================== 模块实例化 ===================
 
@@ -134,9 +134,9 @@ module snake_top (
         .snake_grow_cmd_out(snake_grow_cmd_to_data), // 连接到数据管理器
         .generate_food_cmd_out(generate_food_cmd_to_data),
         .current_score_out(score_to_display_vga),
-        .reset_data_manager_cmd_out(reset_data_manager_cmd_to_data)
-        .sound_event_code_out(sound_event_code_from_logic), // <--- 连接到 wire
-        .sound_trigger_out(sound_trigger_from_logic)       // <--- 连接到 wire
+        .reset_data_manager_cmd_out(reset_data_manager_cmd_to_data),
+        .sound_event_code_out(sound_event_code_to_sound_ctrl),
+        .sound_trigger_out(sound_trigger_to_sound_ctrl)
     );
     // 确保 game_logic_controller 输出 current_direction_in 给 snake_food_manager
     // 这通常是 current_direction 寄存器，这里假设 game_logic_controller 内部有对应的输出
@@ -236,17 +236,17 @@ module snake_top (
         .seg_data_out(seg_data_out),
         .led_out(led_out)
     );
-
-    // 6. 声音控制器 (Sound Controller)
+    
+    // --- 6. 新增：例化声音控制器 ---
     sound_controller #(
         .M(SOUND_EVENT_BITS),
-        .CLK_FREQ(100_000_000) // <--- 注意！您的系统时钟是100MHz，这里要传递正确的值
+        .CLK_FREQ(100_000_000) // 您的系统时钟是100MHz，务必传递正确的值
     ) u_sound_controller (
-        .clk(sys_clk),             // 使用100MHz系统时钟
-        .reset_n(sys_reset_n),       // 连接到全局低电平有效复位
-        .sound_event_code_in(sound_event_code_from_logic),
-        .sound_trigger_in(sound_trigger_from_logic),
-        .buzzer_out(buzzer_physical_out)
+        .clk(sys_clk),
+        .reset_n(sys_reset_n), // 连接到全局低电平复位
+        .sound_event_code_in(sound_event_code_to_sound_ctrl),
+        .sound_trigger_in(sound_trigger_to_sound_ctrl),
+        .buzzer_out(buzzer_out) // 连接到顶层的物理输出端口
     );
-
+    
 endmodule

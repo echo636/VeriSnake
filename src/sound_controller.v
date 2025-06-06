@@ -1,95 +1,105 @@
-// ÉùÒô¿ØÖÆÆ÷ (ÒÑĞŞÕı¸´Î»Âß¼­)
+// å£°éŸ³æ§åˆ¶å™¨ (å·²ä¿®æ­£æ—¶åºé—®é¢˜)
 module sound_controller #(
     parameter M = 2,
-    parameter CLK_FREQ = 50000000 
+    parameter CLK_FREQ = 100_000_000 // ç¡®ä¿è¿™é‡Œæ˜¯æ‚¨çš„100MHzç³»ç»Ÿæ—¶é’Ÿ
 )(
     input wire clk,
-    input wire reset_n, // <--- ĞŞÕıµã1: ¶Ë¿ÚÃû¸ÄÎªµÍÓĞĞ§µÄ reset_n
+    input wire reset_n, // å‡è®¾å·²ä¿®æ­£ä¸ºä½ç”µå¹³æœ‰æ•ˆ
     input wire [M-1:0] sound_event_code_in,
     input wire sound_trigger_in,
     output reg buzzer_out
 );
 
-    // ... (localparam ºÍ reg/wire ¶¨Òå±£³Ö²»±ä) ...
+    // äº‹ä»¶ç¼–ç å®šä¹‰
     localparam EVENT_NONE      = 2'b00;
     localparam EVENT_EAT_FOOD  = 2'b01;
     localparam EVENT_GAME_OVER = 2'b10;
     localparam EVENT_START     = 2'b11;
-    // ...
-    typedef enum logic [1:0] { IDLE, PLAY } sound_state_t;
-    sound_state_t state;
-    // ... (ËùÓĞ tone_*, play_*, pwm_* ¼Ä´æÆ÷ÉùÃ÷²»±ä) ...
-    reg [31:0] tone_freq;
-    reg [31:0] tone_period;
-    reg [31:0] play_duration;
-    reg [31:0] play_cnt;
-    reg [31:0] pwm_cnt;
 
-    // ÊÂ¼ş²ÎÊıÑ¡ÔñÂß¼­ (Õâ²¿·ÖÊÇ×éºÏÂß¼­£¬²»ÊÜ¸´Î»Ó°Ïì£¬ÎŞĞèĞŞ¸Ä)
-    always @(*) begin
-        // ... (case Óï¾ä±£³Ö²»±ä) ...
-        case (sound_event_code_in)
-            EVENT_EAT_FOOD: begin
-                tone_freq     = FREQ_EAT_FOOD;
-                play_duration = DURATION_EAT_FOOD;
-            end
-            EVENT_GAME_OVER: begin
-                tone_freq     = FREQ_GAME_OVER;
-                play_duration = DURATION_GAME_OVER;
-            end
-            EVENT_START: begin
-                tone_freq     = FREQ_START;
-                play_duration = DURATION_START;
-            end
-            default: begin
-                tone_freq     = 0;
-                play_duration = 0;
-            end
-        endcase
-        tone_period = (tone_freq == 0) ? 32'd0 : (CLK_FREQ / (tone_freq * 2)); 
-    end
+    // éŸ³æ•ˆå‚æ•°å®šä¹‰
+    localparam FREQ_EAT_FOOD   = 2000; // Hz
+    localparam FREQ_GAME_OVER  = 500;  // Hz
+    localparam FREQ_START      = 1000; // Hz
 
-    // Ö÷×´Ì¬»úÓëPWMÊä³ö
-    // --- ĞŞÕıµã2: ĞŞ¸Ä always ¿éµÄÃô¸ĞÁĞ±íºÍ¸´Î»ÅĞ¶Ï ---
-    always @(posedge clk or negedge reset_n) begin // <--- Ê¹ÓÃ negedge reset_n
-        if (!reset_n) begin // <--- Ê¹ÓÃ !reset_n
-            // ¸´Î»£ºÈ«²¿ÇåÁã
-            state      <= IDLE;
-            play_cnt   <= 0;
-            pwm_cnt    <= 0;
-            buzzer_out <= 0;
+    // éŸ³æ•ˆæŒç»­æ—¶é—´å®šä¹‰ (å•ä½ï¼šæ—¶é’Ÿå‘¨æœŸæ•°)
+    localparam DURATION_EAT_FOOD  = CLK_FREQ / 20; // 50ms
+    localparam DURATION_GAME_OVER = CLK_FREQ / 2;  // 500ms
+    localparam DURATION_START     = CLK_FREQ / 10; // 100ms
+
+    // çŠ¶æ€æœºå®šä¹‰
+    localparam [0:0] IDLE = 1'b0;
+    localparam [0:0] PLAY = 1'b1;
+    reg state;
+
+    // å†…éƒ¨å¯„å­˜å™¨
+    reg [31:0] current_tone_period; // å­˜å‚¨å½“å‰éŸ³æ•ˆçš„åŠå‘¨æœŸå€¼
+    reg [31:0] play_cnt;            // éŸ³æ•ˆå‰©ä½™æ’­æ”¾æ—¶é’Ÿè®¡æ•°
+    reg [31:0] pwm_cnt;             // æ–¹æ³¢åŠå‘¨æœŸè®¡æ•°å™¨
+
+    // ä¸»çŠ¶æ€æœºä¸PWMè¾“å‡º (å°†æ‰€æœ‰é€»è¾‘åˆå¹¶åˆ°ä¸€ä¸ªæ—¶åºå—ä¸­)
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            state               <= IDLE;
+            play_cnt            <= 0;
+            pwm_cnt             <= 0;
+            buzzer_out          <= 1'b0;
+            current_tone_period <= 0;
         end else begin
             case (state)
                 IDLE: begin
-                    // ... (IDLE ×´Ì¬Âß¼­²»±ä) ...
-                    buzzer_out <= 0;
+                    buzzer_out <= 1'b0; // åœ¨ç©ºé—²æ—¶ä¿æŒèœ‚é¸£å™¨å…³é—­
+                    // å½“æ”¶åˆ°æœ‰æ•ˆçš„è§¦å‘ä¿¡å·æ—¶...
                     if (sound_trigger_in && sound_event_code_in != EVENT_NONE) begin
-                        play_cnt   <= play_duration; // ×°ÔØ³ÖĞøÊ±¼ä
-                        pwm_cnt    <= 0;
-                        state      <= PLAY;
+                        state <= PLAY; // è¿›å…¥æ’­æ”¾çŠ¶æ€
+                        pwm_cnt <= 0;
+                        
+                        // --- åœ¨è¿™é‡Œè®¡ç®—å¹¶è£…è½½æœ¬æ¬¡éŸ³æ•ˆçš„å‚æ•° ---
+                        case (sound_event_code_in)
+                            EVENT_EAT_FOOD: begin
+                                play_cnt            <= DURATION_EAT_FOOD;
+                                current_tone_period <= CLK_FREQ / (FREQ_EAT_FOOD * 2);
+                            end
+                            EVENT_GAME_OVER: begin
+                                play_cnt            <= DURATION_GAME_OVER;
+                                current_tone_period <= CLK_FREQ / (FREQ_GAME_OVER * 2);
+                            end
+                            EVENT_START: begin
+                                play_cnt            <= DURATION_START;
+                                current_tone_period <= CLK_FREQ / (FREQ_START * 2);
+                            end
+                            default: begin
+                                play_cnt            <= 0;
+                                current_tone_period <= 0;
+                            end
+                        endcase
                     end
                 end
+
                 PLAY: begin
-                    // ... (PLAY ×´Ì¬Âß¼­²»±ä) ...
+                    // æ£€æŸ¥æ’­æ”¾æ—¶é—´æ˜¯å¦ç»“æŸ
                     if (play_cnt == 0) begin
                         state      <= IDLE;
-                        buzzer_out <= 0;
+                        buzzer_out <= 1'b0;
                     end else begin
-                        if (tone_period > 0) begin
-                            if (pwm_cnt < tone_period -1) begin // -1 ĞŞÕı£¬ÒÔÆ¥ÅäÖÜÆÚ
+                        play_cnt <= play_cnt - 1; // æ’­æ”¾æ—¶é—´é€’å‡
+                        
+                        // æ ¹æ®å­˜å‚¨å¥½çš„ current_tone_period äº§ç”ŸPWMæ–¹æ³¢
+                        if (current_tone_period > 0) begin
+                            if (pwm_cnt < current_tone_period - 1) begin
                                 pwm_cnt <= pwm_cnt + 1;
                             end else begin
                                 pwm_cnt    <= 0;
-                                buzzer_out <= ~buzzer_out;
+                                buzzer_out <= ~buzzer_out; // ç¿»è½¬èœ‚é¸£å™¨ç”µå¹³
                             end
                         end else begin
-                            buzzer_out <= 0;
+                            buzzer_out <= 1'b0; // å¦‚æœå‘¨æœŸä¸º0ï¼Œåˆ™é™éŸ³
                         end
-                        play_cnt <= play_cnt - 1;
                     end
                 end
+                
                 default: state <= IDLE;
             endcase
         end
     end
+
 endmodule

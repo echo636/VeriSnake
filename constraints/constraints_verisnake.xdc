@@ -147,8 +147,8 @@ set_property IOSTANDARD LVCMOS33 [get_ports {led_out[*]}]
 # -------------------------------------------------------------
 # Buzzer Output (蜂鸣器输出)
 # -------------------------------------------------------------
-set_property PACKAGE_PIN P26 [get_ports buzzer_physical_out]
-set_property IOSTANDARD LVCMOS33 [get_ports buzzer_physical_out]
+set_property PACKAGE_PIN AF25 [get_ports buzzer_out]
+set_property IOSTANDARD LVCMOS33 [get_ports buzzer_out]
 
 
 # =============================================================
