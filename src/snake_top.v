@@ -6,13 +6,8 @@ module snake_top (
     input wire sys_reset_n,         // 系统复位 (低电平有效)
 
     // 按键输入 (假设您有这些物理按键)
-    input wire btn_up_raw_in,
-    input wire btn_down_raw_in,
-    input wire btn_left_raw_in,
-    input wire btn_right_raw_in,
-    input wire btn_start_pause_raw_in,
-    input wire btn_game_reset_raw_in,
-
+    input wire ps2_clk, // <--- 新增
+    input wire ps2_data, // <--- 新增
     // =================== 物理输出 ===================
     // VGA 输出
     output wire vga_hs_out,
@@ -94,18 +89,22 @@ module snake_top (
     // =================== 模块实例化 ===================
 
     // 1. 输入处理器 (Input Handler)
-    input_handler #(
-        // 如果 input_handler 有参数，在这里传递
-    ) u_input_handler (
-        .clk(sys_clk),
-        .reset_n(sys_reset_n), // 连接到全局低电平复位
-        .btn_up_raw(btn_up_raw_in),
-        .btn_down_raw(btn_down_raw_in),
-        .btn_left_raw(btn_left_raw_in),
-        .btn_right_raw(btn_right_raw_in),
-        .sw_start_pause_raw(btn_start_pause_raw_in),
-        .sw_reset_raw(btn_game_reset_raw_in),
+    // 在 snake_top.v 中
 
+    // --- 1. 用 PS2 模块替换 input_handler ---
+    // 注释掉或删除原来的 u_input_handler
+    /*
+    input_handler #() u_input_handler ( ... );
+    */
+
+    // 例化新的 PS2 模块
+    PS2 u_ps2_keyboard (
+        .clk(sys_clk),
+        .reset_n(sys_reset_n),
+        .ps2_clk_in(ps2_clk),
+        .ps2_data_in(ps2_data),
+
+        // 输出与原来 input_handler 的输出连接到相同的 wire
         .direction_out(direction_to_logic),
         .direction_valid_out(direction_valid_to_logic),
         .start_pause_event_out(start_pause_event_to_logic),

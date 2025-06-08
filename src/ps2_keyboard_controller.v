@@ -1,125 +1,120 @@
+// PS2.v (已修正复位和输出逻辑)
 module PS2(
-	input clk, reset,
-	input ps2_clk_in, ps2_data_in,
-	output reg [1:0] key_direction_out,
-    output reg key_direction_valid_out,
-    output reg key_start_pause_event_out,
-    output reg key_reset_event_out,
-    output reg enter,
-    output reg esc
-	);
+    input clk,               // 系统主时钟 (例如 100MHz)
+    input reset_n,           // <--- 修正1: 低电平有效复位
+    input ps2_clk_in,        // 来自PS/2接口的时钟
+    input ps2_data_in,       // 来自PS/2接口的数据
 
-reg ps2_clk_falg0, ps2_clk_falg1, ps2_clk_falg2;
-wire negedge_ps2_clk = !ps2_clk_falg1 & ps2_clk_falg2;
-reg negedge_ps2_clk_shift;
-reg [9:0] data;
-reg data_break, data_done, data_expand;
-reg[7:0]temp_data;
-reg[3:0]num;
+    // 输出与 input_handler 的输出端口保持一致
+    output reg [1:0] direction_out,
+    output reg direction_valid_out,
+    output reg start_pause_event_out,
+    output reg reset_event_out
+    // output reg enter, // 如果需要，可以保留这些
+    // output reg esc   // 如果需要，可以保留这些
+);
 
-always@(posedge clk or posedge reset)begin
-	if(reset)begin
-		ps2_clk_falg0<=1'b0;
-		ps2_clk_falg1<=1'b0;
-		ps2_clk_falg2<=1'b0;
-	end
-	else begin
-		ps2_clk_falg0<=ps2_clk_in;
-		ps2_clk_falg1<=ps2_clk_falg0;
-		ps2_clk_falg2<=ps2_clk_falg1;
-	end
-end
+    // PS2时钟同步与下降沿检测
+    reg ps2_clk_sync0, ps2_clk_sync1, ps2_clk_sync2;
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            {ps2_clk_sync2, ps2_clk_sync1, ps2_clk_sync0} <= 3'b111; // 复位为高
+        end else begin
+            {ps2_clk_sync2, ps2_clk_sync1, ps2_clk_sync0} <= {ps2_clk_sync1, ps2_clk_sync0, ps2_clk_in};
+        end
+    end
+    wire negedge_ps2_clk = ps2_clk_sync2 & ~ps2_clk_sync1; // 使用同步后的信号进行边沿检测，更可靠
 
-always@(posedge clk or posedge reset)begin
-	if(reset)
-		num<=4'd0;
-	else if (num==4'd11)
-		num<=4'd0;
-	else if (negedge_ps2_clk)
-		num<=num+1'b1;
-end
+    // PS2数据接收逻辑
+    reg [3:0] bit_count;
+    reg [7:0] data_byte;
+    reg data_ready_pulse;
 
-always@(posedge clk)begin
-	negedge_ps2_clk_shift<=negedge_ps2_clk;
-end
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            bit_count <= 4'd0;
+            data_ready_pulse <= 1'b0;
+        end else begin
+            data_ready_pulse <= 1'b0; // 默认每个周期清零，产生单周期脉冲
+            if (negedge_ps2_clk) begin
+                if (bit_count == 4'd0 && ps2_data_in == 1'b0) begin // 检测到起始位
+                    bit_count <= bit_count + 1;
+                end else if (bit_count > 0 && bit_count < 9) begin // 接收8位数据
+                    data_byte[bit_count-1] <= ps2_data_in;
+                    bit_count <= bit_count + 1;
+                end else if (bit_count == 10) begin // 第10位是奇偶校验位(忽略)，第11位是停止位(高)
+                    data_ready_pulse <= 1'b1; // 接收完成，产生一个脉冲
+                    bit_count <= 4'd0;
+                end else if (bit_count > 0) begin
+                    bit_count <= bit_count + 1;
+                end
+            end
+        end
+    end
 
+    // 扫描码处理逻辑
+    reg [9:0] scan_code;
+    reg is_break_code;
+    reg is_extended_code;
 
-always@(posedge clk or posedge reset)begin
-	if(reset)
-		temp_data<=8'd0;
-	else if (negedge_ps2_clk_shift)begin
-		case(num)
-			4'd2 : temp_data[0]<=ps2_data_in;
-			4'd3 : temp_data[1]<=ps2_data_in;
-			4'd4 : temp_data[2]<=ps2_data_in;
-			4'd5 : temp_data[3]<=ps2_data_in;
-			4'd6 : temp_data[4]<=ps2_data_in;
-			4'd7 : temp_data[5]<=ps2_data_in;
-			4'd8 : temp_data[6]<=ps2_data_in;
-			4'd9 : temp_data[7]<=ps2_data_in;
-			default: temp_data<=temp_data;
-		endcase
-	end
-	else temp_data<=temp_data;
-end
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            scan_code <= 10'd0;
+            is_break_code <= 1'b0;
+            is_extended_code <= 1'b0;
+        end else if (data_ready_pulse) begin // 只有在新数据字节到达时才处理
+            if (data_byte == 8'hF0) begin
+                is_break_code <= 1'b1; // 下一个字节是断码
+                is_extended_code <= 1'b0; // 清除扩展码标志
+            end else if (data_byte == 8'hE0) begin
+                is_extended_code <= 1'b1; // 下一个字节是扩展码
+                is_break_code <= 1'b0; // 清除断码标志
+            end else begin
+                scan_code <= {is_extended_code, is_break_code, data_byte};
+                is_break_code <= 1'b0; // 清除标志，为下一次做准备
+                is_extended_code <= 1'b0;
+            end
+        end
+    end
+    
+    // --- 修正2: 将按键事件解码和输出脉冲生成放在一个时序块中 ---
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            direction_out <= 2'b00;
+            direction_valid_out <= 1'b0;
+            start_pause_event_out <= 1'b0;
+            reset_event_out <= 1'b0;
+            // enter <= 1'b0;
+            // esc <= 1'b0;
+        end else begin
+            // 默认每个周期将脉冲信号清零
+            direction_valid_out <= 1'b0;
+            start_pause_event_out <= 1'b0;
+            reset_event_out <= 1'b0;
 
-always@(posedge clk or posedge reset)begin
-	if(reset)begin
-		data_break<=1'b0;
-		data<=10'd0;
-		data_done<=1'b0;
-		data_expand<=1'b0;
-	end
-	else if(num==4'd11)begin
-		if(temp_data==8'hE0)begin
-			data_expand<=1'b1;
-		end
-		else if(temp_data==8'hF0)begin
-			data_break<=1'b1;
-		end
-		else begin
-			data<={data_expand,data_break,temp_data};
-			data_done<=1'b1;
-			data_expand<=1'b0;
-			data_break<=1'b0;
-		end
-	end
-	else begin
-		data<=data;
-		data_done<=1'b0;
-		data_expand<=data_expand;
-		data_break<=data_break;
-	end
-end
+            // 只有在新数据字节到达且不是断码时才处理
+            if (data_ready_pulse && !is_break_code) begin
+                case ({is_extended_code, data_byte})
+                    // 方向键 (支持小键盘和独立方向键)
+                    9'h075, 9'h175: begin direction_out <= 2'b00; direction_valid_out <= 1'b1; end // Up
+                    9'h072, 9'h172: begin direction_out <= 2'b01; direction_valid_out <= 1'b1; end // Down
+                    9'h06B, 9'h16B: begin direction_out <= 2'b10; direction_valid_out <= 1'b1; end // Left
+                    9'h074, 9'h174: begin direction_out <= 2'b11; direction_valid_out <= 1'b1; end // Right
+                    
+                    // 功能键
+                    9'h029: start_pause_event_out <= 1'b1; // Space for Start/Pause
+                    9'h00D: reset_event_out <= 1'b1;       // Tab for Game Reset (example)
+                    
+                    // 您的原始代码中的其他按键映射
+                    // 10'h05A: enter <= 1; // Enter
+                    // 10'h076: esc <= 1;   // Escape
 
-always @(posedge clk) begin
-	case (data)
-        10'h01D: begin key_direction_out <= 2'b00; key_direction_valid_out <= 1; end
-        10'h11D: begin key_direction_out <= 2'b00; key_direction_valid_out <= 0; end
-        10'h01B: begin key_direction_out <= 2'b01; key_direction_valid_out <= 1; end
-        10'h11B: begin key_direction_out <= 2'b01; key_direction_valid_out <= 0; end
-        10'h01C: begin key_direction_out <= 2'b10; key_direction_valid_out <= 1; end
-        10'h11C: begin key_direction_out <= 2'b10; key_direction_valid_out <= 0; end
-        10'h023: begin key_direction_out <= 2'b11; key_direction_valid_out <= 1; end
-        10'h123: begin key_direction_out <= 2'b11; key_direction_valid_out <= 0; end
-        10'h029: key_start_pause_event_out <= 1;
-        10'h129: key_start_pause_event_out <= 0;
-        10'h00D: key_reset_event_out <= 1;
-        10'h10D: key_reset_event_out <= 0;
-        10'h275: begin key_direction_out <= 2'b00; key_direction_valid_out <= 1; end
-        10'h375: begin key_direction_out <= 2'b00; key_direction_valid_out <= 0; end
-        10'h272: begin key_direction_out <= 2'b01; key_direction_valid_out <= 1; end
-        10'h372: begin key_direction_out <= 2'b01; key_direction_valid_out <= 0; end
-        10'h26B: begin key_direction_out <= 2'b10; key_direction_valid_out <= 1; end
-        10'h36B: begin key_direction_out <= 2'b10; key_direction_valid_out <= 0; end
-        10'h274: begin key_direction_out <= 2'b11; key_direction_valid_out <= 1; end
-        10'h374: begin key_direction_out <= 2'b11; key_direction_valid_out <= 0; end
-        10'h05A: enter <= 1;
-        10'h15A: enter <= 0;
-        10'h076: esc <= 1;
-        10'h176: esc <= 0;
-        default:key_direction_valid_out <= 0;
-    endcase
-end
+                    default: ; // 其他按键按下不产生任何事件
+                endcase
+            end
+            // 注意：当按键松开时 (收到断码)，我们这里不做任何操作。
+            // direction_out 会保持上一次的值，而事件脉冲已经自动清零。
+        end
+    end
 
 endmodule

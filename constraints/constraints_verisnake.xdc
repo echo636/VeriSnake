@@ -150,7 +150,13 @@ set_property IOSTANDARD LVCMOS33 [get_ports {led_out[*]}]
 set_property PACKAGE_PIN AF25 [get_ports buzzer_out]
 set_property IOSTANDARD LVCMOS33 [get_ports buzzer_out]
 
-
+# -------------------------------------------------------------
+# 6. PS/2 Interface (Keyboard Input)
+# -------------------------------------------------------------
+set_property PACKAGE_PIN N18 [get_ports ps2_clk]
+set_property IOSTANDARD LVCMOS33 [get_ports ps2_clk]
+set_property PACKAGE_PIN M19 [get_ports ps2_data]
+set_property IOSTANDARD LVCMOS33 [get_ports ps2_data]
 # =============================================================
 # End of Constraints
 # =============================================================
