@@ -1,4 +1,3 @@
-// ÉßÉíÓëÊ³ÎïÊı¾İ¹ÜÀíÆ÷ (ÒÑĞŞÕı¶àÇı¶¯ÎÊÌâ)
 module snake_food_manager #(
     parameter X = 6,
     parameter Y = 5,
@@ -6,184 +5,166 @@ module snake_food_manager #(
     parameter S_ADDR_W = 6
 )(
     input wire clk,
-    input wire reset_cmd_in,
-    input wire snake_move_cmd_in,
-    input wire [1:0] current_direction_in,
-    input wire generate_food_cmd_in,
-    input wire [X-1:0] game_area_max_x_in, // Ó¦¸ÃÊÇÊµ¼Ê¿í¶È/¸ß¶ÈÖµ, e.g., 60, ¶ø²»ÊÇ×î´óË÷Òı 59
-    input wire [Y-1:0] game_area_max_y_in, // Ó¦¸ÃÊÇÊµ¼Ê¿í¶È/¸ß¶ÈÖµ, e.g., 40, ¶ø²»ÊÇ×î´óË÷Òı 39
-    input wire [S_ADDR_W-1:0] vga_query_segment_addr_in,
-
-    output reg food_eaten_out,
-    output reg collision_out,
-    output reg [X-1:0] food_x_out,
-    output reg [Y-1:0] food_y_out,
-    output wire [X-1:0] snake_head_x_out,
-    output wire [Y-1:0] snake_head_y_out,
-    output reg [S_LEN_W-1:0] snake_length_out,
-    output wire [X-1:0] queried_segment_x_out,
-    output wire [Y-1:0] queried_segment_y_out,
-    output wire queried_segment_valid_out
+    input wire rst,
+    input wire mv,
+    input wire [1:0] dir,
+    input wire genf,
+    input wire [X-1:0] max_x,
+    input wire [Y-1:0] max_y,
+    input wire [S_ADDR_W-1:0] q_addr,
+    output reg eat,
+    output reg col,
+    output reg [X-1:0] fx,
+    output reg [Y-1:0] fy,
+    output wire [X-1:0] hx,
+    output wire [Y-1:0] hy,
+    output reg [S_LEN_W-1:0] len,
+    output wire [X-1:0] q_x,
+    output wire [Y-1:0] q_y,
+    output wire q_vld
 );
 
     localparam SNAKE_MAX_LEN = (1 << S_ADDR_W);
 
-    reg [X-1:0] snake_x [0:SNAKE_MAX_LEN-1];
-    reg [Y-1:0] snake_y [0:SNAKE_MAX_LEN-1];
-    reg [S_ADDR_W-1:0] head_ptr;
+    reg [X-1:0] sx [0:SNAKE_MAX_LEN-1];
+    reg [Y-1:0] sy [0:SNAKE_MAX_LEN-1];
+    reg [S_ADDR_W-1:0] hp;
     reg [X+Y-1:0] lfsr;
-    reg [X+Y-1:0] free_run_counter; // ËüµÄÎ»¿í¿ÉÒÔºÍlfsrÒ»Ñù
-    reg generating_food;
+    reg [X+Y-1:0] cnt;
+    reg gening;
 
-    integer i; // Ä£¿é¼¶ÉùÃ÷
+    integer i;
 
-    // Îª×ÔÅö×²ºÍÊ³Îï¼ì²éÖĞ for Ñ­»·µÄ±ß½çÌõ¼şÉùÃ÷ reg
-    reg [S_LEN_W-1:0] segments_to_check_for_collide;
-    reg [S_LEN_W-1:0] snake_len_for_food_check;
+    reg [S_LEN_W-1:0] seg_chk;
+    reg [S_LEN_W-1:0] len_chk;
 
-
-    wire [X-1:0] current_head_x = snake_x[head_ptr];
-    wire [Y-1:0] current_head_y = snake_y[head_ptr];
+    wire [X-1:0] chx = sx[hp];
+    wire [Y-1:0] chy = sy[hp];
     
-    reg  [X-1:0] next_head_x; // ÒÑĞŞÕıÎª reg
-    reg  [Y-1:0] next_head_y; // ÒÑĞŞÕıÎª reg
-    wire [S_ADDR_W-1:0] next_head_ptr = head_ptr + 1;
+    reg  [X-1:0] nhx;
+    reg  [Y-1:0] nhy;
+    wire [S_ADDR_W-1:0] nhp = hp + 1;
 
-    wire will_eat_food;
-    wire will_collide_wall;
-    wire will_collide_self;
-    wire is_food_on_snake;
-    
-    // --- ÒÆ³ıÁËÄ£¿é¼¶µÄ: reg [S_ADDR_W-1:0] physical_addr; ---
+    wire eat_next;
+    wire wall;
+    wire self;
+    wire food_on;
 
-    // ========== ×éºÏÂß¼­: ¼ÆËãÏÂÒ»¸ö×´Ì¬ ==========
-
-    // Õâ¸ö always ¿éÖ»ÏìÓ¦Ê±ÖÓ£¬Ã»ÓĞ¸´Î»£¬ËùÒÔËü»áÒ»Ö±¼ÆÊı
+    // æ—¶é’Ÿè®¡æ•°å™¨
     always @(posedge clk) begin
-        free_run_counter <= free_run_counter + 1;
+        cnt <= cnt + 1;
     end
 
-    // 1. ¼ÆËãÏÂÒ»¸öÉßÍ·µÄÎ»ÖÃ
+    // å¤´éƒ¨ç§»åŠ¨æ–¹å‘
     always @(*) begin
-        case (current_direction_in)
-            2'b00: begin next_head_x = current_head_x; next_head_y = current_head_y - 1; end
-            2'b01: begin next_head_x = current_head_x; next_head_y = current_head_y + 1; end
-            2'b10: begin next_head_x = current_head_x - 1; next_head_y = current_head_y; end
-            default: begin next_head_x = current_head_x + 1; next_head_y = current_head_y; end
+        case (dir)
+            2'b00: begin nhx = chx; nhy = chy - 1; end
+            2'b01: begin nhx = chx; nhy = chy + 1; end
+            2'b10: begin nhx = chx - 1; nhy = chy; end
+            default: begin nhx = chx + 1; nhy = chy; end
         endcase
     end
 
-    // 2. ÅĞ¶ÏÏÂÒ»¸öÎ»ÖÃÊÇ·ñ»á³ÔÊ³Îï
-    assign will_eat_food = (next_head_x == food_x_out) && (next_head_y == food_y_out);
+    // åˆ¤æ–­æ˜¯å¦åƒåˆ°é£Ÿç‰©
+    assign eat_next = (nhx == fx) && (nhy == fy);
 
-    // 3. ÅĞ¶ÏÏÂÒ»¸öÎ»ÖÃÊÇ·ñ»á×²Ç½
-    // ¼ÙÉè game_area_max_x_in ÊÇ¿í¶È (e.g., 60), game_area_max_y_in ÊÇ¸ß¶È (e.g., 40)
-    // ÓĞĞ§×ø±ê·¶Î§ÊÇ x: 0 to width-1, y: 0 to height-1
-    assign will_collide_wall = (next_head_x > game_area_max_x_in) || (next_head_y > game_area_max_y_in) ||
-                               (next_head_x < 0) || (next_head_y < 0); // ÑÏ¸ñÀ´Ëµ£¬ÎŞ·ûºÅÊı<0»áÈÆ»Ø£¬ËùÒÔ>=dimensionÒÑ°üº¬´ËÇé¿ö
+    // åˆ¤æ–­æ˜¯å¦æ’å¢™
+    assign wall = (nhx > max_x) || (nhy > max_y) || (nhx < 0) || (nhy < 0);
 
-    // 4. ÅĞ¶ÏÏÂÒ»¸öÎ»ÖÃÊÇ·ñ»á×²×Ô¼º
-    reg will_collide_self_reg;
+    // åˆ¤æ–­æ˜¯å¦æ’åˆ°è‡ªå·±
+    reg self_r;
     always @(*) begin
-        will_collide_self_reg = 1'b0;
-        if (will_eat_food) begin // Ê¹ÓÃ¼ÆËãºÃµÄ will_eat_food
-            segments_to_check_for_collide = snake_length_out;
-        end else begin
-            segments_to_check_for_collide = snake_length_out - 1;
-        end
+        self_r = 1'b0;
+        if (eat_next) seg_chk = len;
+        else seg_chk = len - 1;
         
-        for (i = 1; i < segments_to_check_for_collide; i = i + 1) begin
-            // Ö±½ÓÊ¹ÓÃµØÖ·±í´ïÊ½£¬²»¸³Öµ¸ø¹²ÏíµÄ physical_addr
-            if ((next_head_x == snake_x[head_ptr - i]) && (next_head_y == snake_y[head_ptr - i])) begin
-                will_collide_self_reg = 1'b1;
+        for (i = 1; i < seg_chk; i = i + 1) begin
+            if ((nhx == sx[hp - i]) && (nhy == sy[hp - i])) begin
+                self_r = 1'b1;
             end
         end
     end
-    assign will_collide_self = will_collide_self_reg;
-    
-    // 5. ÅĞ¶ÏËæ»úÉú³ÉµÄÊ³ÎïÊÇ·ñÔÚÉßÉíÉÏ
-    reg is_food_on_snake_reg;
-    // ¼ÙÉè game_area_max_x_in ÊÇÊµ¼Ê¿í¶È/¸ß¶È, ÓÃÓÚÈ¡Ä£
-    wire [X-1:0] rand_x_eff = (game_area_max_x_in == 0) ? 0 : (lfsr[X-1:0] % game_area_max_x_in);
-    wire [Y-1:0] rand_y_eff = (game_area_max_y_in == 0) ? 0 : (lfsr[X+Y-1:X] % game_area_max_y_in);
+    assign self = self_r;
+
+    // åˆ¤æ–­æ–°é£Ÿç‰©æ˜¯å¦ç”Ÿæˆåœ¨è›‡èº«ä¸Š
+    reg food_r;
+    wire [X-1:0] rx = (max_x == 0) ? 0 : (lfsr[X-1:0] % max_x);
+    wire [Y-1:0] ry = (max_y == 0) ? 0 : (lfsr[X+Y-1:X] % max_y);
 
     always @(*) begin
-        is_food_on_snake_reg = 1'b0;
-        snake_len_for_food_check = snake_length_out; // ¸³Öµ¸øÄ£¿é¼¶ reg
+        food_r = 1'b0;
+        len_chk = len;
         
-        for (i = 0; i < snake_len_for_food_check; i = i + 1) begin
-            // Ö±½ÓÊ¹ÓÃµØÖ·±í´ïÊ½
-            if ((rand_x_eff == snake_x[head_ptr - i]) && (rand_y_eff == snake_y[head_ptr - i])) begin
-                is_food_on_snake_reg = 1'b1;
+        for (i = 0; i < len_chk; i = i + 1) begin
+            if ((rx == sx[hp - i]) && (ry == sy[hp - i])) begin
+                food_r = 1'b1;
             end
         end
     end
-    assign is_food_on_snake = is_food_on_snake_reg;
+    assign food_on = food_r;
 
-    // ========== Ê±ĞòÂß¼­: ×´Ì¬¸üĞÂ ==========
+    // çŠ¶æ€å¯„å­˜å™¨ä¸ä¸»é€»è¾‘
     always @(posedge clk) begin
-        if (reset_cmd_in) begin
-            snake_x[0] <= 8;  snake_y[0] <= 10;
-            snake_x[1] <= 9;  snake_y[1] <= 10;
-            snake_x[2] <= 10; snake_y[2] <= 10;
-            head_ptr <= 2;
-            snake_length_out <= 3;
-            food_x_out <= 10;
-            food_y_out <= 9;
-            collision_out <= 0;
-            food_eaten_out <= 0;
-            //lfsr <= {X+Y{1'b1}}; 
-            lfsr <= free_run_counter;
-            generating_food <= 0;
+        if (rst) begin
+            sx[0] <= 8;  sy[0] <= 10;
+            sx[1] <= 9;  sy[1] <= 10;
+            sx[2] <= 10; sy[2] <= 10;
+            hp <= 2;
+            len <= 3;
+            fx <= 10;
+            fy <= 9;
+            col <= 0;
+            eat <= 0;
+            lfsr <= cnt;
+            gening <= 0;
         end else begin
-            food_eaten_out <= 0; // Ä¬ÈÏÇåÁãÂö³åĞÅºÅ
-            collision_out <= 0;  // Ä¬ÈÏÇåÁãÂö³åĞÅºÅ
+            eat <= 0;
+            col <= 0;
             
-            if (X+Y >= 5) begin // È·±£LFSR³éÍ·ÓĞĞ§
+            if (X+Y >= 5) begin
                  lfsr <= {lfsr[X+Y-2:0], lfsr[X+Y-1] ^ lfsr[X+Y-5]};
             end else if (X+Y > 0) begin 
-                 lfsr <= {lfsr[X+Y-2:0], lfsr[X+Y-1] ^ lfsr[0]}; // ¼ò»¯µÄLFSR£¬Èç¹ûÌ«¶Ì
+                 lfsr <= {lfsr[X+Y-2:0], lfsr[X+Y-1] ^ lfsr[0]};
             end
 
-
-            if (snake_move_cmd_in) begin
-                if (will_collide_wall || will_collide_self) begin
-                    collision_out <= 1;
+            if (mv) begin
+                if (wall || self) begin
+                    col <= 1;
                 end else begin
-                    head_ptr <= next_head_ptr;
-                    snake_x[next_head_ptr] <= next_head_x;
-                    snake_y[next_head_ptr] <= next_head_y;
+                    hp <= nhp;
+                    sx[nhp] <= nhx;
+                    sy[nhp] <= nhy;
 
-                    if (will_eat_food) begin
-                        food_eaten_out <= 1;
-                        if (snake_length_out < SNAKE_MAX_LEN) begin
-                            snake_length_out <= snake_length_out + 1;
+                    if (eat_next) begin
+                        eat <= 1;
+                        if (len < SNAKE_MAX_LEN) begin
+                            len <= len + 1;
                         end
                     end
                 end
             end
             
-            if (generate_food_cmd_in || generating_food) begin
-                if (!is_food_on_snake) begin
-                    food_x_out <= rand_x_eff; // Ê¹ÓÃ¼ÆËã³öµÄÓĞĞ§Ëæ»ú×ø±ê
-                    food_y_out <= rand_y_eff; // Ê¹ÓÃ¼ÆËã³öµÄÓĞĞ§Ëæ»ú×ø±ê
-                    generating_food <= 0;
+            if (genf || gening) begin
+                if (!food_on) begin
+                    fx <= rx;
+                    fy <= ry;
+                    gening <= 0;
                 end else begin
-                    generating_food <= 1;
+                    gening <= 1;
                 end
             end
         end
     end
 
-    // ========== Êä³öÂß¼­ ==========
-    assign snake_head_x_out = current_head_x;
-    assign snake_head_y_out = current_head_y;
+    // è¾“å‡ºå½“å‰è›‡å¤´åæ ‡
+    assign hx = chx;
+    assign hy = chy;
 
-    // ÎªVGA²éÑ¯´´½¨×¨ÓÃµÄµØÖ·Ïß
-    wire [S_ADDR_W-1:0] vga_lookup_physical_addr = head_ptr - vga_query_segment_addr_in;
+    // VGAæŸ¥è¯¢æ¥å£
+    wire [S_ADDR_W-1:0] vga_addr = hp - q_addr;
     
-    assign queried_segment_x_out = snake_x[vga_lookup_physical_addr];
-    assign queried_segment_y_out = snake_y[vga_lookup_physical_addr];
-    assign queried_segment_valid_out = (vga_query_segment_addr_in < snake_length_out);
+    assign q_x = sx[vga_addr];
+    assign q_y = sy[vga_addr];
+    assign q_vld = (q_addr < len);
 
 endmodule

@@ -2,241 +2,227 @@ module game_logic_controller #(
     parameter N = 16,
     parameter M = 2,
     parameter INITIAL_SPEED = 26'd10_000_000,
-    parameter SPEED_INCREMENT = 26'd20_000_000//暂时修改
+    parameter SPEED_INCREMENT = 26'd20_000_000
 )(
     // 时钟和复位
     input wire clk,
-    // --- 修正点 1: 修改全局复位端口为低电平有效 ---
-    input wire reset_global_n, // <--- 从 reset_global 改为 reset_global_n
+    input wire rst_n,
 
     // 来自输入处理器的信号
-    input wire [1:0] direction_in,
-    input wire direction_valid_in,
-    input wire start_pause_event_in,
-    input wire reset_event_in,       // 这个通常是一个高电平有效的事件脉冲
+    input wire [1:0] dir_in,
+    input wire dir_vld_in,
+    input wire sp_evt_in,
+    input wire rst_evt_in,      
 
-    // ... (其他端口不变) ...
-    input wire food_eaten_in,
-    input wire collision_in,
-    input wire game_tick_in,
-    output reg [1:0] game_state_out,
-    output reg snake_move_cmd_out,
-    output reg snake_grow_cmd_out,
-    output reg generate_food_cmd_out,
-    output reg [N-1:0] current_score_out,
-    output reg reset_data_manager_cmd_out,
-    output reg [M-1:0] sound_event_code_out,
-    output reg sound_trigger_out
+    input wire food_in,
+    input wire col_in,
+    input wire tick_in,
+    output reg [1:0] state_out,
+    output reg mv_out,
+    output reg grow_out,
+    output reg genf_out,
+    output reg [N-1:0] sc_out,
+    output reg rst_dm_out,
+    output reg [M-1:0] snd_evt_out,
+    output reg snd_trig_out
 );
 
-    // ... (localparam 定义不变) ...
-    localparam STATE_IDLE      = 2'b00;
-    localparam STATE_PLAYING   = 2'b01;
-    localparam STATE_PAUSED    = 2'b10;
-    localparam STATE_GAME_OVER = 2'b11;
-    localparam DIR_UP          = 2'b00;
-    localparam DIR_DOWN        = 2'b01;
-    localparam DIR_LEFT        = 2'b10;
-    localparam DIR_RIGHT       = 2'b11;
-    localparam SOUND_EAT_FOOD  = 2'b01;
-    localparam SOUND_GAME_OVER = 2'b10;
-    localparam SOUND_GAME_START= 2'b11;
+    localparam S_IDLE = 2'b00;
+    localparam S_PLAY = 2'b01;
+    localparam S_PAUSE = 2'b10;
+    localparam S_OVER = 2'b11;
+    localparam UP = 2'b00;
+    localparam DOWN = 2'b01;
+    localparam LEFT = 2'b10;
+    localparam RIGHT = 2'b11;
+    localparam SND_EAT = 2'b01;
+    localparam SND_OVER = 2'b10;
+    localparam SND_START = 2'b11;
 
-    // --- 修正点 2: 修改内部复位信号的生成逻辑 ---
-    // 当全局复位 reset_global_n 为低(0)，或者 reset_event_in (高有效脉冲) 为高(1)时，
-    // sys_reset_active 变为高电平，触发复位。
-    wire sys_reset_active = !reset_global_n || reset_event_in; // <--- 修改这里的逻辑
 
-    // ... (内部寄存器和标志位定义不变) ...
-    reg [1:0] current_state, next_state;
-    reg [1:0] current_direction, next_direction;
-    reg [N-1:0] score, next_score;
-    reg [25:0] speed_counter;
-    reg [25:0] current_speed;
-    reg game_tick_internal;
-    reg game_tick_delayed;
-    reg direction_changed;
-    reg food_eaten_reg;
-    reg collision_reg;
-    reg start_pause_pressed;
-    reg food_eaten_prev;
-    reg collision_prev;
-    reg start_pause_prev;
-    reg snake_move_cmd_next;
-    reg snake_grow_cmd_next;
-    reg generate_food_cmd_next;
-    reg reset_data_manager_cmd_next;
-    reg [M-1:0] sound_event_code_next;
-    reg sound_trigger_next;
+    wire rst_act = !rst_n || rst_evt_in; 
+
+    reg [1:0] state, nstate;
+    reg [1:0] dir, ndir;
+    reg [N-1:0] sc, nsc;
+    reg [25:0] spd_cnt;
+    reg [25:0] spd;
+    reg tick, tick_d;
+    reg dir_chg;
+    reg eat_reg;
+    reg col_reg;
+    reg sp_pressed;
+    reg eat_prev;
+    reg col_prev;
+    reg sp_prev;
+    reg mv_nxt;
+    reg grow_nxt;
+    reg genf_nxt;
+    reg rst_dm_nxt;
+    reg [M-1:0] snd_evt_nxt;
+    reg snd_trig_nxt;
 
     // 边沿检测逻辑
-    // --- 修正点 3: 修改所有 always 块中的复位判断条件 ---
     always @(posedge clk) begin
-        if (sys_reset_active) begin // <--- 使用新的 sys_reset_active
-            food_eaten_prev <= 1'b0;
-            collision_prev <= 1'b0;
-            start_pause_prev <= 1'b0;
-            food_eaten_reg <= 1'b0;
-            collision_reg <= 1'b0;
-            start_pause_pressed <= 1'b0;
+        if (rst_act) begin
+            eat_prev <= 1'b0;
+            col_prev <= 1'b0;
+            sp_prev <= 1'b0;
+            eat_reg <= 1'b0;
+            col_reg <= 1'b0;
+            sp_pressed <= 1'b0;
         end else begin
-            food_eaten_prev <= food_eaten_in;
-            collision_prev <= collision_in;
-            start_pause_prev <= start_pause_event_in;
-            food_eaten_reg <= food_eaten_in & ~food_eaten_prev;
-            collision_reg <= collision_in & ~collision_prev;
-            start_pause_pressed <= start_pause_event_in & ~start_pause_prev;
+            eat_prev <= food_in;
+            col_prev <= col_in;
+            sp_prev <= sp_evt_in;
+            eat_reg <= food_in & ~eat_prev;
+            col_reg <= col_in & ~col_prev;
+            sp_pressed <= sp_evt_in & ~sp_prev;
         end
     end
 
     // 游戏时钟分频器
     always @(posedge clk) begin
-        if (sys_reset_active) begin // <--- 使用新的 sys_reset_active
-            speed_counter <= 26'd0;
-            game_tick_internal <= 1'b0;
-            game_tick_delayed <= 1'b0;
-            current_speed <= INITIAL_SPEED;
-        end else if (current_state == STATE_PLAYING) begin
-            game_tick_delayed <= game_tick_internal;
-            if (speed_counter >= current_speed - 1) begin
-                speed_counter <= 26'd0;
-                game_tick_internal <= 1'b1;
+        if (rst_act) begin 
+            spd_cnt <= 26'd0;
+            tick <= 1'b0;
+            tick_d <= 1'b0;
+            spd <= INITIAL_SPEED;
+        end else if (state == S_PLAY) begin
+            tick_d <= tick;
+            if (spd_cnt >= spd - 1) begin
+                spd_cnt <= 26'd0;
+                tick <= 1'b1;
             end else begin
-                speed_counter <= speed_counter + 1;
-                game_tick_internal <= 1'b0;
+                spd_cnt <= spd_cnt + 1;
+                tick <= 1'b0;
             end
         end else begin
-            speed_counter <= 26'd0;
-            game_tick_internal <= 1'b0;
-            game_tick_delayed <= 1'b0;
+            spd_cnt <= 26'd0;
+            tick <= 1'b0;
+            tick_d <= 1'b0;
         end
     end
 
     // 状态机时序逻辑
     always @(posedge clk) begin
-        if (sys_reset_active) begin // <--- 使用新的 sys_reset_active
-            current_state <= STATE_IDLE;
-            current_direction <= DIR_UP;
-            score <= {N{1'b0}};
-            direction_changed <= 1'b0;
+        if (rst_act) begin 
+            state <= S_IDLE;
+            dir <= UP;
+            sc <= {N{1'b0}};
+            dir_chg <= 1'b0;
         end else begin
-            current_state <= next_state;
-            current_direction <= next_direction;
-            score <= next_score;
-            if (direction_valid_in && (direction_in != current_direction)) begin
-                direction_changed <= 1'b1;
+            state <= nstate;
+            dir <= ndir;
+            sc <= nsc;
+            if (dir_vld_in && (dir_in != dir)) begin
+                dir_chg <= 1'b1;
             end else begin
-                direction_changed <= 1'b0;
+                dir_chg <= 1'b0;
             end
         end
     end
 
-    // 状态机组合逻辑 (这部分不需要修改复位，因为它不直接使用复位信号)
+    // 状态机组合逻辑 
     always @(*) begin
-        // ... (内部逻辑不变) ...
-        next_state = current_state;
-        next_direction = current_direction;
-        next_score = score;
-        snake_move_cmd_next = 1'b0;
-        snake_grow_cmd_next = 1'b0;
-        generate_food_cmd_next = 1'b0;
-        reset_data_manager_cmd_next = 1'b0;
-        sound_event_code_next = 2'b00;
-        sound_trigger_next = 1'b0;
+        nstate = state;
+        ndir = dir;
+        nsc = sc;
+        mv_nxt = 1'b0;
+        grow_nxt = 1'b0;
+        genf_nxt = 1'b0;
+        rst_dm_nxt = 1'b0;
+        snd_evt_nxt = 2'b00;
+        snd_trig_nxt = 1'b0;
 
-        case (current_state)
-            STATE_IDLE: begin
-                if (start_pause_pressed) begin
-                    next_state = STATE_PLAYING;
-                    reset_data_manager_cmd_next = 1'b1;
-                    generate_food_cmd_next = 1'b1;
-                    next_score = {N{1'b0}};
-                    next_direction = DIR_UP;
-                    sound_event_code_next = SOUND_GAME_START;
-                    sound_trigger_next = 1'b1;
+        case (state)
+            S_IDLE: begin
+                if (sp_pressed) begin
+                    nstate = S_PLAY;
+                    rst_dm_nxt = 1'b1;
+                    genf_nxt = 1'b1;
+                    nsc = {N{1'b0}};
+                    ndir = UP;
+                    snd_evt_nxt = SND_START;
+                    snd_trig_nxt = 1'b1;
                 end
             end
-            STATE_PLAYING: begin
-                if (start_pause_pressed) begin
-                    next_state = STATE_PAUSED;
-                end else if (collision_reg) begin
-                    next_state = STATE_GAME_OVER;
-                    sound_event_code_next = SOUND_GAME_OVER;
-                    sound_trigger_next = 1'b1;
+            S_PLAY: begin
+                if (sp_pressed) begin
+                    nstate = S_PAUSE;
+                end else if (col_reg) begin
+                    nstate = S_OVER;
+                    snd_evt_nxt = SND_OVER;
+                    snd_trig_nxt = 1'b1;
                 end else begin
-                    if (direction_valid_in) begin
-                        case (current_direction)
-                            DIR_UP:    if (direction_in != DIR_DOWN)  next_direction = direction_in;
-                            DIR_DOWN:  if (direction_in != DIR_UP)    next_direction = direction_in;
-                            DIR_LEFT:  if (direction_in != DIR_RIGHT) next_direction = direction_in;
-                            DIR_RIGHT: if (direction_in != DIR_LEFT)  next_direction = direction_in;
+                    if (dir_vld_in) begin
+                        case (dir)
+                            UP:    if (dir_in != DOWN)  ndir = dir_in;
+                            DOWN:  if (dir_in != UP)    ndir = dir_in;
+                            LEFT:  if (dir_in != RIGHT) ndir = dir_in;
+                            RIGHT: if (dir_in != LEFT)  ndir = dir_in;
                         endcase
                     end
-                    if (game_tick_internal) begin
-                        snake_move_cmd_next = 1'b1;
+                    if (tick) begin
+                        mv_nxt = 1'b1;
                     end
-                    if (food_eaten_reg) begin
-                        snake_grow_cmd_next = 1'b1;
-                        generate_food_cmd_next = 1'b1;
-                        next_score = score + 1;
-                        sound_event_code_next = SOUND_EAT_FOOD;
-                        sound_trigger_next = 1'b1;
+                    if (eat_reg) begin
+                        grow_nxt = 1'b1;
+                        genf_nxt = 1'b1;
+                        nsc = sc + 1;
+                        snd_evt_nxt = SND_EAT;
+                        snd_trig_nxt = 1'b1;
                     end
                 end
             end
-            STATE_PAUSED: begin
-                if (start_pause_pressed) begin
-                    next_state = STATE_PLAYING;
+            S_PAUSE: begin
+                if (sp_pressed) begin
+                    nstate = S_PLAY;
                 end
             end
-            STATE_GAME_OVER: begin
-                if (start_pause_pressed) begin
-                    next_state = STATE_IDLE;
+            S_OVER: begin
+                if (sp_pressed) begin
+                    nstate = S_IDLE;
                 end
             end
             default: begin
-                next_state = STATE_IDLE;
+                nstate = S_IDLE;
             end
         endcase
     end
 
     // 根据分数动态调整游戏速度
     always @(posedge clk) begin
-        if (sys_reset_active) begin // <--- 使用新的 sys_reset_active
-            current_speed <= INITIAL_SPEED;
-        end else if (current_state == STATE_PLAYING && food_eaten_reg) begin
-            if (current_speed > SPEED_INCREMENT + 26'd10_000_000) begin
-                current_speed <= current_speed - SPEED_INCREMENT;
+        if (rst_act) begin 
+            spd <= INITIAL_SPEED;
+        end else if (state == S_PLAY && eat_reg) begin
+            if (spd > SPEED_INCREMENT + 26'd10_000_000) begin
+                spd <= spd - SPEED_INCREMENT;
             end
         end
     end
 
     // 输出赋值
     always @(posedge clk) begin
-        if (sys_reset_active) begin // <--- 使用新的 sys_reset_active
-            game_state_out <= STATE_IDLE;
-            snake_move_cmd_out <= 1'b0;
-            snake_grow_cmd_out <= 1'b0;
-            generate_food_cmd_out <= 1'b0;
-            current_score_out <= {N{1'b0}};
-            reset_data_manager_cmd_out <= 1'b0;
-            sound_event_code_out <= 2'b00;
-            sound_trigger_out <= 1'b0;
+        if (rst_act) begin 
+            state_out <= S_IDLE;
+            mv_out <= 1'b0;
+            grow_out <= 1'b0;
+            genf_out <= 1'b0;
+            sc_out <= {N{1'b0}};
+            rst_dm_out <= 1'b0;
+            snd_evt_out <= 2'b00;
+            snd_trig_out <= 1'b0;
         end else begin
-            game_state_out <= next_state;
-            snake_move_cmd_out <= snake_move_cmd_next;
-            snake_grow_cmd_out <= snake_grow_cmd_next;
-            generate_food_cmd_out <= generate_food_cmd_next;
-            current_score_out <= next_score;
-            reset_data_manager_cmd_out <= reset_data_manager_cmd_next;
-            sound_event_code_out <= sound_event_code_next;
-            sound_trigger_out <= sound_trigger_next;
+            state_out <= nstate;
+            mv_out <= mv_nxt;
+            grow_out <= grow_nxt;
+            genf_out <= genf_nxt;
+            sc_out <= nsc;
+            rst_dm_out <= rst_dm_nxt;
+            snd_evt_out <= snd_evt_nxt;
+            snd_trig_out <= snd_trig_nxt;
         end
-    end
-
-    // ... (initial 块不变，仅用于仿真) ...
-    initial begin
-        // ...
     end
 
 endmodule
