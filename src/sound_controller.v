@@ -1,10 +1,10 @@
-// 声音控制器 (已修正时序问题)
+// 声音控制器
 module sound_controller #(
     parameter M = 2,
-    parameter CLK_FREQ = 100_000_000 // 确保这里是您的100MHz系统时钟
+    parameter CLK_FREQ = 100_000_000 // 100MHz系统时钟
 )(
     input wire clk,
-    input wire rst_n, // 假设已修正为低电平有效
+    input wire rst_n, // 低电平有效
     input wire [M-1:0] evt,
     input wire trig,
     output reg buzz
@@ -17,9 +17,9 @@ module sound_controller #(
     localparam START= 2'b11;
 
     // 音效参数定义
-    localparam F_EAT  = 2000; // Hz
-    localparam F_OVER = 500;  // Hz
-    localparam F_START= 1000; // Hz
+    localparam F_EAT  = 2000; 
+    localparam F_OVER = 500;  
+    localparam F_START= 1000; 
 
     // 音效持续时间定义 (单位：时钟周期数)
     localparam D_EAT  = CLK_FREQ / 20; // 50ms
@@ -48,12 +48,10 @@ module sound_controller #(
             case (state)
                 IDLE: begin
                     buzz <= 1'b0; // 在空闲时保持蜂鸣器关闭
-                    // 当收到有效的触发信号时...
                     if (trig && evt != NONE) begin
                         state <= PLAY; // 进入播放状态
                         pwm_cnt <= 0;
                         
-                        // --- 在这里计算并装载本次音效的参数 ---
                         case (evt)
                             EAT: begin
                                 play_cnt <= D_EAT;
