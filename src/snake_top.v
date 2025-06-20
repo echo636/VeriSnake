@@ -25,6 +25,8 @@ module snake_top (
     localparam SE = 2;
     localparam GP = 10;
 
+    wire clk_25m175;
+    wire clk_locked;
     wire [1:0] dir;
     wire dir_vld;
     wire sp_evt;
@@ -50,6 +52,13 @@ module snake_top (
     wire q_seg_vld;
     wire [SE-1:0] snd_evt;
     wire snd_trig;
+
+    clk_wiz_0 u_vga_clk (
+        .clk_out1(clk_25m175),     
+        .reset(~rst_n), 
+        .locked(clk_locked),       
+        .clk_in1(clk)     
+    );
 
     PS2 u_ps2 (
         .clk(clk),
@@ -120,9 +129,14 @@ module snake_top (
         .SCORE_BITS(SC),
         .GRID_SIZE(GP),
         .GRID_W(GW),
-        .GRID_H(GH)
+        .GRID_H(GH),
+        .FOOD_IMAGE_WIDTH(10),
+        .FOOD_IMAGE_HEIGHT(10),
+        .FOOD_MEM_DEPTH(100),
+        .FOOD_ADDR_WIDTH(7)
     ) u_vga (
-        .clk(clk),
+        .clk(clk),               // 主时钟，给模块内部的帧缓冲逻辑使用
+        .px_clk(clk_25m175),     // <-- 关键！将IP核生成的像素时钟连接到这里
         .rst_n(rst_n),
         .state(state),
         .sc(sc),
@@ -136,7 +150,7 @@ module snake_top (
         .q_x(q_seg_x),
         .q_y(q_seg_y),
         .q_vld(q_seg_vld),
-        .q_addr(vga_q_addr),
+        .q_addr(vga_q_addr),     // 注意：在你的原始代码中，这个信号没有被驱动，请检查是否需要
         .hs(vga_hs),
         .vs(vga_vs),
         .r(vga_r),
